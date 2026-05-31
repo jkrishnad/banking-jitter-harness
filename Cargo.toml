@@ -3,4 +3,21 @@ name = "banking-jitter"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[lib]
+name = "banking_jitter"
+path = "src/lib.rs"
+
+[dev-dependencies]
+agave-banking-stage-ingress-types = { path = "../banking-stage-ingress-types", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+crossbeam-channel = "0.5.15"
+solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-entry = { path = "../entry", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-keypair = "3.1.2"
+solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-perf = { path = "../perf", features = ["agave-unstable-api"] }
+solana-poh = { path = "../poh", features = ["agave-unstable-api"] }
+solana-pubkey = "4.2.0"
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-system-transaction = "4.0.0"
+tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread"] }
