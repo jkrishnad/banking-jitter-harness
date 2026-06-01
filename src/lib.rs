@@ -5,7 +5,8 @@ mod tests {
         crossbeam_channel::unbounded,
         solana_core::{
             banking_stage::{
-                BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
+                BankingStage, committer::Committer, consumer::Consumer,
+                transaction_scheduler::scheduler_controller::SchedulerConfig,
             },
             banking_trace::{BankingTracer, Channels},
             validator::{BlockProductionMethod, SchedulerPacing},
@@ -20,9 +21,14 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
         },
         solana_perf::packet::to_packet_batches,
-        solana_poh::poh_recorder::create_test_recorder,
+        solana_poh::{
+            poh_recorder::create_test_recorder, record_channels::record_channels,
+            transaction_recorder::TransactionRecorder,
+        },
         solana_runtime::bank::Bank,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_system_transaction as system_transaction,
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::{
             num::NonZeroUsize,
             sync::{Arc, atomic::Ordering},
@@ -62,6 +68,15 @@ mod tests {
             vals.iter().sum::<u64>() / vals.len() as u64
         };
         (min, mean, max)
+    }
+
+    // sanitize_transactions is pub(crate) in agave's test module — not importable externally.
+    fn sanitize_transactions(
+        txs: Vec<Transaction>,
+    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+        txs.into_iter()
+            .map(RuntimeTransaction::from_transaction_for_tests)
+            .collect()
     }
 
     // Phase timing from consumer.rs debug logs execute_and_commit_transactions_locked emits two debug! lines:
@@ -207,5 +222,75 @@ mod tests {
 
         assert_eq!(latencies_ms.len(), N_ITERATIONS);
         assert!(latencies_ms.iter().all(|&ms| ms > 0));
+    }
+
+    #[test]
+    fn measure_pre_phase_slot_timing() {
+        // the genesis config
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(1_000_000_000);
+
+        // create the bank and transaction recorder
+        let (bank, _forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
+        // create the replay vote sender and committer
+        let (replay_vote_sender, _) = unbounded();
+        let committer = Committer::new(None, replay_vote_sender, None);
+
+        // create the consumer
+        let consumer = Consumer::new(committer, recorder, None);
+
+        let mut load_exec_all = Vec::with_capacity(N_ITERATIONS);
+        let mut freeze_all = Vec::with_capacity(N_ITERATIONS);
+        let mut record_all = Vec::with_capacity(N_ITERATIONS);
+        let mut commit_all = Vec::with_capacity(N_ITERATIONS);
+
+        for i in 0..N_ITERATIONS {
+            let start_hash = bank.last_blockhash();
+            let recipient = solana_pubkey::new_rand();
+            let tx = system_transaction::transfer(&mint_keypair, &recipient, 1, start_hash);
+            let txs = sanitize_transactions(vec![tx]);
+            let output = consumer.process_and_record_transactions(&bank, &txs);
+
+            let t = &output
+                .execute_and_commit_transactions_output
+                .execute_and_commit_timings;
+
+            println!(
+                "[iter {:>2}]  load_execute={:>6}µs  freeze_lock={:>6}µs  record={:>6}µs  \
+                 commit={:>6}µs",
+                i, t.load_execute_us, t.freeze_lock_us, t.record_us, t.commit_us,
+            );
+
+            load_exec_all.push(t.load_execute_us);
+            freeze_all.push(t.freeze_lock_us);
+            record_all.push(t.record_us);
+            commit_all.push(t.commit_us);
+        }
+
+        println!("\nLeaderExecuteAndCommitTimings — {N_ITERATIONS} runs (µs):");
+        println!("  phase         min    mean     max  jitter");
+        for (name, vals) in [
+            ("load_execute", &load_exec_all),
+            ("freeze_lock ", &freeze_all),
+            ("record      ", &record_all),
+            ("commit      ", &commit_all),
+        ] {
+            let (min, mean, max) = stats(vals);
+            println!(
+                "  {name}  {:>6}  {:>6}  {:>6}  {:>6}",
+                min,
+                mean,
+                max,
+                max.saturating_sub(min)
+            );
+        }
     }
 }
