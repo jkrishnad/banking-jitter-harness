@@ -38,11 +38,11 @@ mod tests {
         tokio::sync::mpsc,
     };
 
-    // Votor per-round timing — Alpenglow Figure 2
+    // Votor per-round timing from Alpenglow Figure 2
     // Timeout(i) = clock() + delta_timeout + (i − s + 1) · delta_block
     // Finalization: 1 round ≥ 80% stake OR 2 rounds ≥ 60% stake.
     const VOTOR_DELTA_BLOCK_MS: u64 = 400;
-    const VOTOR_DELTA_TIMEOUT_MS: u64 = 50; // assuming 50ms
+    const VOTOR_DELTA_MS: u64 = 50; // assuming 50ms
 
     // Number of consecutive slot executions to measure; jitter = max − min.
     const N_ITERATIONS: usize = 10;
@@ -85,9 +85,7 @@ mod tests {
     //   "bank: {slot} process_and_record_locked: {load_execute_us} us"
     //   "record: {record_us} us commit: {commit_us} us txs_len: {n}"
     //
-    // These are the same fields that end up in LeaderExecuteAndCommitTimings
-    // (the struct the assignment asks us to surface). They are only emitted at debug level, so run the test with:
-
+    // These are the same fields that end up in LeaderExecuteAndCommitTimings.
     #[test]
     fn measure_banking_stage_slot_timing() {
         agave_logger::setup();
@@ -175,7 +173,7 @@ mod tests {
             latencies_ms.push(elapsed_ms);
         }
 
-        let delta_timeout = 3 * VOTOR_DELTA_TIMEOUT_MS;
+        let delta_timeout = 3 * VOTOR_DELTA_MS;
 
         let timeout = delta_timeout + VOTOR_DELTA_BLOCK_MS;
 
